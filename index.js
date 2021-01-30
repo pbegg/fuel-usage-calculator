@@ -1,5 +1,5 @@
 const fs = require('fs');
-
+const fsp = require('fs').promises;
 
 module.exports = function (app) {
 
@@ -13,8 +13,8 @@ module.exports = function (app) {
 
   plugin.onStop=[]
 
-  let timerIdDelta;
-  let timerIdPath;
+  var timerIdDelta;
+  var timerIdPath;
 
 
 
@@ -29,6 +29,7 @@ module.exports = function (app) {
     timerIdDelta = setInterval(() => {
       try {
         for (const [key, value] of Object.entries(plugin.record)) {
+          
 
           timeTrigger=Date.now()-plugin.record[key].fuelUsedTime
           if (timeTrigger<=5000) {
@@ -47,20 +48,19 @@ module.exports = function (app) {
                 }
               ]
             })             
-        }
-      }    
-    }
+          }
+        }    
+      }
       catch (error) {
         app.debug(error)
-    }
-  }
-      , 1000)
+      }
+    }  , 1000)
 
     timerIdDelta = setInterval(() => {
       try {
         fs.writeFile(persistedData, JSON.stringify(plugin.record), (error) => {
           if (error) throw error;
-          app.debug('File Update')
+          app.debug(`Fuel usage saved to Disk ${JSON.stringify(plugin.record)}`)
         });         
       }
       catch (error) {
@@ -69,18 +69,8 @@ module.exports = function (app) {
     }
       , options.saveFreq)
 
-
-    fs.readFile(persistedData, (error, data) => {
-      if (error) throw error;
-      try {
-        plugin.record=JSON.parse(data);
-        app.debug(plugin.record)
-      }
-      catch (error) {
-        plugin.record={}
-      }
-    })
-    startStream(options, plugin.onStop,plugin.record)
+    loadFile(options, plugin.onStop, plugin.record,persistedData)
+    
   };
 
   plugin.stop = function () {
@@ -122,7 +112,7 @@ module.exports = function (app) {
   function startStream(options, onStop, record) {
     const values={}
     options.paths.forEach(path => {
-      onStop.push(
+      plugin.onStop.push(
         app.streambundle
           .getSelfBus(path)
           .forEach(pos => {
@@ -136,19 +126,21 @@ module.exports = function (app) {
 
   function fuelCalc(options,record,path,value,timestamp) {
     if (record[path] == undefined) {
+      app.debug(`${record[path]} is undefined so creating the first timestamp'`)
       record[path]={'firstTime':timestamp}
 
     }
     if (record[path].firstTime) {
       record[path].secondTime=timestamp
       var elapsedTime=record[path].secondTime-record[path].firstTime
+      //app.debug(`elapsedTime is ${elapsedTime}`)
       if (elapsedTime!= 0) {
         if (elapsedTime <= options.timeout) {
-            var elapsedTime=record[path].secondTime-record[path].firstTime
 
             
             const ratio=1000/elapsedTime
             const instantFuelUsage=value/ratio
+            //app.debug(`instantFuelUsage: ${instantFuelUsage}`)
             if (record[path].fuelUsed == undefined) {
               record[path].fuelUsed=instantFuelUsage
               record[path].fuelUsedTime=Date.now()
@@ -158,17 +150,32 @@ module.exports = function (app) {
               record[path].fuelUsed+=instantFuelUsage
               record[path].fuelUsedTime=Date.now()
             }
-        }
-       
-      record[path].firstTime=timestamp
-
-        
+        }      
+      record[path].firstTime=timestamp        
       }
-
     }
+    plugin.record=record
+  }
+
+  async function loadFile(options, onStop, record, persistedData) {
+      const data = await fsp.readFile(persistedData)
+        .then((data) => {
+          app.debug(`loaded saved paramaters: ${(data)}`)        
+          record=JSON.parse(data);
+          startStream(options, onStop, record)       
+          })   
+
+        .catch((err) => {
+          app.debug(`Theres is currently no saved fuel usage data saved on file - resetting usage to 0`)
+          plugin.record={}
+          startStream(options, onStop, record) 
+        })
+
+
 
 
   }
+    
 
 
   return plugin;
