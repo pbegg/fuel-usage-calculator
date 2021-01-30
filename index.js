@@ -77,9 +77,10 @@ module.exports = function (app) {
         app.debug(plugin.record)
       }
       catch (error) {
+        plugin.record={}
       }
-      startStream(options, plugin.onStop,plugin.record)
     })
+    startStream(options, plugin.onStop,plugin.record)
   };
 
   plugin.stop = function () {
