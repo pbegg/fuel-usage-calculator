@@ -14,4 +14,5 @@ This is how often the fuel used will be saved to a file. If the plugin or signal
 
 ### TimeOut 
 The Timeout setting in the node's configuration, should be set to at least the maximum interval between successive readings. This is to avoid the situation where for example, a sensor is taken off line, develops a fault or there is a communication problem, resulting in a break of several hours between readings and the calculation - interval x fuel.rate = fuel.used would then be inaccurate.
+
 ```10000```
