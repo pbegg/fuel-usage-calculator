@@ -6,6 +6,10 @@ module.exports = function (app) {
 
   let unsubscribes = []
 
+  let fuelUsage = {}
+
+  let record = {}
+
   
   let _localSubscription = function(options) {
     const subscribeArray = []
@@ -21,32 +25,84 @@ module.exports = function (app) {
     })
   }
 
+  //needs to receive an array for pathArray
+  let _convertRateToUsed = function (pathArray) {
+    const usedArray = []
+    pathArray.forEach(path => {
+      splitRate = path.split('.')
+      splitRate[3] = 'used'
+      splitRate=splitRate.join('.')
+      usedArray.push(splitRate)
+    })
+    return usedArray
+  }
+
   let _loadFuelUsage = function(options) {
     const usage = {}
+    const usedPath = _convertRateToUsed(options.paths)
     if (options.savedUsage) {
-      options.paths.forEach(path => {
-
-        if (!options.savedUsage[path]) {
+      usedPath.forEach(path => {
+        if (options.savedUsage[path] === undefined) {
           options.savedUsage[path] = 0
         }
       })      
     }
     else {
       options.savedUsage = {}
-      options.paths.forEach(path => {
+      usedPath.forEach(path => {
         options.savedUsage[path] = 0
       })
     }
-    app.debug(options)
+    return options
   }
+
+
+  let _saveFuelUsage = function(options) {
+    app.savePluginOptions(options, () => {
+      app.debug(`Fuel Used: ${JSON.stringify(options.savedUsage)}`)
+    });
+  }
+
+  let fuelCalc = function (options,record,path,value,timestamp) {
+    app.debug(record,path,value,timestamp)
+    if (record[path] == undefined) {
+      app.debug(`${record[path]} is undefined so creating the first timestamp'`)
+      record[path]={'firstTime':timestamp}
+
+    }
+    if (record[path].firstTime) {
+      record[path].secondTime=timestamp
+      var elapsedTime=record[path].secondTime-record[path].firstTime
+      //app.debug(`elapsedTime is ${elapsedTime}`)
+      if (elapsedTime!= 0) {
+        if (elapsedTime <= options.timeout) {
+
+            
+            const ratio=1000/elapsedTime
+            const instantFuelUsage=value/ratio
+            //app.debug(`instantFuelUsage: ${instantFuelUsage}`)
+            if (record[path].fuelUsed == undefined) {
+              record[path].fuelUsed=instantFuelUsage
+              record[path].fuelUsedTime=Date.now()
+
+            }
+            if (record[path].fuelUsed != undefined) {
+              record[path].fuelUsed+=instantFuelUsage
+              record[path].fuelUsedTime=Date.now()
+            }
+        }      
+      record[path].firstTime=timestamp        
+      }
+    }
+  }
+  
 
 
   let _start = function(options) {
     app.debug(`${plugin.name} Started...`)
-    _loadFuelUsage(options)
-    
+    fuelUsage = _loadFuelUsage(options).savedUsage
+    app.debug(fuelUsage)
 
-    //app.savePluginOptions(options, () => {app.debug('Plugin options saved')});
     app.subscriptionmanager.subscribe(
       _localSubscription(options),
       unsubscribes,
@@ -55,7 +111,8 @@ module.exports = function (app) {
       },
       delta => {
         delta.updates.forEach(u => {
-          app.debug(u.values);
+          fuelCalc(options,record,u.values[0].path,u.values[0].value,Date.parse(u.timestamp))
+          app.debug(u);
         });
       }
     );
