@@ -98,7 +98,7 @@ module.exports = function (app) {
   }
 
   let fuelCalc = function (options,record,path,value,timestamp) {
-    app.debug(`record is ${JSON.stringify(record)}`)
+    //app.debug(`record is now ${JSON.stringify(record)}`)
     if (record[path]['firstTime'] == undefined) {
       app.debug(`${record[path]} is undefined so creating the first timestamp'`)
       record[path]['firstTime']={'firstTime':timestamp}
@@ -125,7 +125,7 @@ module.exports = function (app) {
               record[path].fuelUsedTime=Date.now()
             }
             options.savedUsage[path]=record[path].fuelUsed
-            app.debug(JSON.stringify(options))
+            //app.debug(JSON.stringify(options))
             //_saveFuelUsage(options)
         }      
       record[path].firstTime=timestamp        
@@ -157,7 +157,7 @@ module.exports = function (app) {
       delta => {
         delta.updates.forEach(u => {
           fuelCalc(options,record,_convertRateToUsed([u.values[0].path]),u.values[0].value,Date.parse(u.timestamp))
-          app.debug(u);
+          //app.debug(u);
         });
       }
     );
