@@ -1,133 +1,107 @@
 const fs = require('fs');
 const fsp = require('fs').promises;
 
+
 module.exports = function (app) {
 
+  let unsubscribes = []
 
-  var plugin = {};
+  let fuelUsage = {}
 
+  let record = {}
 
-  plugin.id = 'fuel-usage-calculator';
-  plugin.name = 'Fuel Usage Calculator';
-  plugin.description = 'A Signalk plugin to calculate your fuel usage based on propulsion.*.fuel.rate';
+  let updateDeltaInterval
 
-  plugin.onStop=[]
-
-  var timerIdDelta;
-  var timerIdPath;
+  let saveFuelUsageInterval
 
 
+  let updateDelta = function(record) {
+      for (const [key, value] of Object.entries(record)) {
+        
 
+        timeTrigger=Date.now()-record[key].fuelUsedTime
+        if (timeTrigger<=5000) {
+          usedPath=key.split('.')
+          usedPath[3]='used'
+          usedPath=usedPath.join('.')
+          app.handleMessage(plugin.id, {
+            updates: [
+              {
+                values: [
+                  {
+                    path: usedPath,
+                    value: value.fuelUsed
+                  }
+                ]
+              }
+            ]
+          })             
+        }
+      }    
 
-  plugin.start = function (options, restartPlugin) {
-    var persistedData = require('path').join(app.getDataDirPath(), 'persistedData.json')    
-    plugin.onStop=[]
-    plugin.record={}
-    // Here we put our plugin logic
-    app.debug(`${plugin.id} started`);
-
-    timerIdDelta = setInterval(() => {
-      try {
-        for (const [key, value] of Object.entries(plugin.record)) {
-          
-
-          timeTrigger=Date.now()-plugin.record[key].fuelUsedTime
-          if (timeTrigger<=5000) {
-            usedPath=key.split('.')
-            usedPath[3]='used'
-            usedPath=usedPath.join('.')
-            app.handleMessage(plugin.id, {
-              updates: [
-                {
-                  values: [
-                    {
-                      path: usedPath,
-                      value: value.fuelUsed
-                    }
-                  ]
-                }
-              ]
-            })             
-          }
-        }    
-      }
-      catch (error) {
-        app.debug(error)
-      }
-    }  , 1000)
-
-    timerIdDelta = setInterval(() => {
-      try {
-        fs.writeFile(persistedData, JSON.stringify(plugin.record), (error) => {
-          if (error) throw error;
-          app.debug(`Fuel usage saved to Disk ${JSON.stringify(plugin.record)}`)
-        });         
-      }
-      catch (error) {
-        app.debug(error)
-      }
-    }
-      , options.saveFreq)
-
-    loadFile(options, plugin.onStop, plugin.record,persistedData)
-    
-  };
-
-  plugin.stop = function () {
-    plugin.onStop.forEach(f => f());
-    clearInterval(timerIdPath)
-    clearInterval(timerIdDelta)
-    // Here we put logic we need when the plugin stops
-    app.debug('Plugin stopped');
-  };
-  
-
-  plugin.schema = {
-    type: 'object',
-    required: ['paths', 'saveFreq'],
-    properties: {
-      paths: {
-        type: 'array',
-        title: 'Paths to use for fuel calculations',
-        default: ['propulsion.port.fuel.rate'],
-        items: {
-          type: 'string'
-          }
-      },
-      saveFreq: {
-        type: 'number',
-        title: 'How often to save the fuel used to disk',
-        default: 15000
-      },
-      timeout: {
-        type: 'number',
-        title: 'How long until timeout',
-        default: 10000
-      },      
-    }
-  };
-
-
-
-  function startStream(options, onStop, record) {
-    const values={}
-    options.paths.forEach(path => {
-      plugin.onStop.push(
-        app.streambundle
-          .getSelfBus(path)
-          .forEach(pos => {
-            fuelCalc(options,record,path,pos.value,Date.parse(pos.timestamp))
-          }
-          )
-      )    
-    }
-    )
   }
 
-  function fuelCalc(options,record,path,value,timestamp) {
-    if (record[path] == undefined) {
+  let _localSubscription = function(options) {
+    const subscribeArray = []
+    options.paths.forEach(path => {
+      const subscribe = {}
+      subscribe.path = path
+      subscribe.policy = "instant"
+      subscribeArray.push(subscribe)
+    })
+    return (localSubscription = {
+      "context" : "vessels.self",
+      "subscribe" : subscribeArray
+    })
+  }
+
+  //needs to receive an array for pathArray
+  let _convertRateToUsed = function (pathArray) {
+    const usedArray = []
+    pathArray.forEach(path => {
+      splitRate = path.split('.')
+      splitRate[3] = 'used'
+      splitRate=splitRate.join('.')
+      usedArray.push(splitRate)
+    })
+    return usedArray
+  }
+
+  let _loadFuelUsage = function(options) {
+    const usage = {}
+    const usedPath = _convertRateToUsed(options.paths)
+    if (options.savedUsage) {
+      usedPath.forEach(path => {
+        if (options.savedUsage[path] === undefined) {
+          options.savedUsage[path] = 0
+        }
+        else {
+          record[path]={'fuelUsed':options.savedUsage[path]}
+        }
+      })      
+    }
+    else {
+      options.savedUsage = {}
+      usedPath.forEach(path => {
+        options.savedUsage[path] = 0
+      })
+    }
+    _saveFuelUsage(options)
+    return options
+  }
+
+
+  let _saveFuelUsage = function(options) {
+    app.savePluginOptions(options, () => {
+      app.debug(`Fuel Used: ${JSON.stringify(options.savedUsage)}`)
+    });
+  }
+
+  let fuelCalc = function (options,record,path,value,timestamp) {
+    //app.debug(`record is now ${JSON.stringify(record)}`)
+    if (record[path]['firstTime'] == undefined) {
       app.debug(`${record[path]} is undefined so creating the first timestamp'`)
-      record[path]={'firstTime':timestamp}
+      record[path]['firstTime']={'firstTime':timestamp}
 
     }
     if (record[path].firstTime) {
@@ -150,34 +124,100 @@ module.exports = function (app) {
               record[path].fuelUsed+=instantFuelUsage
               record[path].fuelUsedTime=Date.now()
             }
+            options.savedUsage[path]=record[path].fuelUsed
+            //app.debug(JSON.stringify(options))
+            //_saveFuelUsage(options)
         }      
       record[path].firstTime=timestamp        
       }
     }
-    plugin.record=record
+  }
+  
+
+
+  let _start = function(options) {
+    app.debug(`${plugin.name} Started...`)
+    fuelUsage = _loadFuelUsage(options).savedUsage
+    app.debug(fuelUsage)
+
+    updateDeltaInterval = setInterval(function() {
+        updateDelta(record);
+    }, 1000);    
+
+    saveFuelUsageInterval = setInterval(function() {
+        _saveFuelUsage(options);
+    }, options.saveFreq);  
+
+    app.subscriptionmanager.subscribe(
+      _localSubscription(options),
+      unsubscribes,
+      subscriptionError => {
+        app.error('Error:' + subscriptionError);
+      },
+      delta => {
+        delta.updates.forEach(u => {
+          fuelCalc(options,record,_convertRateToUsed([u.values[0].path]),u.values[0].value,Date.parse(u.timestamp))
+          //app.debug(u);
+        });
+      }
+    );
+
   }
 
-  async function loadFile(options, onStop, record, persistedData) {
-      const data = await fsp.readFile(persistedData)
-        .then((data) => {
-          app.debug(`loaded saved paramaters: ${(data)}`)        
-          record=JSON.parse(data);
-          startStream(options, onStop, record)       
-          })   
+  let _stop = function(options) {
+    app.debug(`${plugin.name} Stopped...`)
+    unsubscribes.forEach(f => f());
+    unsubscribes = [];
 
-        .catch((err) => {
-          app.debug(`Theres is currently no saved fuel usage data saved on file - resetting usage to 0`)
-          plugin.record={}
-          startStream(options, onStop, record) 
-        })
+    if (updateDeltaInterval) {
+        clearInterval(updateDeltaInterval);
+    }
+    // clean up the state
+    updateDeltaInterval = undefined;
 
-
-
-
+    if (saveFuelUsageInterval) {
+        clearInterval(saveFuelUsageInterval);
+    }
+    // clean up the state
+    saveFuelUsageInterval = undefined;
   }
-    
+
+  const plugin = {
+    id: 'fuel-usage-calculator',
+    name: 'Fuel Usage Calculator',
+    description: 'A Signalk plugin to calculate your fuel usage based on propulsion.*.fuel.rate',
+
+    schema: {
+      type: 'object',
+      required: ['paths', 'saveFreq'],
+      properties: {
+        paths: {
+          type: 'array',
+          title: 'Paths to use for fuel calculations',
+          default: ['propulsion.port.fuel.rate','propulsion.starboard.fuel.rate'],
+          items: {
+            type: 'string'
+          }
+        },
+        saveFreq: {
+          type: 'number',
+          title: 'How often to save the fuel used to disk',
+          default: 15000
+        },
+        timeout: {
+          type: 'number',
+          title: 'How long until timeout',
+          default: 10000
+        }      
+      }
+    },
+
+        
+    start: _start,
+    stop: _stop
+  }
 
 
-  return plugin;
+return plugin;
 
-};
+}
